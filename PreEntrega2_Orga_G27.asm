@@ -63,6 +63,18 @@ buffer_mov: .space 2
 .align 2
 elemento_bajo_personaje: .byte ' '
 
+msg_victoria: .asciz "\n¡Victoria! Has completado el mapa.\n"
+len_victoria = . - msg_victoria
+
+@se guarda el mapa actual para reiniciarlo con R
+mapa_actual: .word 1
+
+@si se activa, no se vuelve a limpiar la pantalla antes de pedir otro movimiento
+saltar_redibujar: .word 0
+
+msg_fail: .asciz "\n - Failed! Movimiento no permitido."
+len_fail = . - msg_fail
+
 .text
 .global main
 
@@ -97,18 +109,28 @@ cargar_mapa1:
     ldr r0, =mapa1
     ldr r1, =mapa1_filas
     ldr r2, =mapa1_columnas
+    mov r3, #1
+    ldr r4, =mapa_actual
+    str r3, [r4]
     b preparar_carga
 
 cargar_mapa2:
     ldr r0, =mapa2
     ldr r1, =mapa2_filas
     ldr r2, =mapa2_columnas
+    mov r3, #2
+    ldr r4, =mapa_actual
+    str r3, [r4]
     b preparar_carga
 
 cargar_mapa3:
     ldr r0, =mapa3
     ldr r1, =mapa3_filas
     ldr r2, =mapa3_columnas
+    mov r3, #3
+    ldr r4, =mapa_actual
+    str r3, [r4]
+    b preparar_carga
 
 preparar_carga:
     ldr r1, [r1]
@@ -125,10 +147,23 @@ preparar_carga:
 
 bucle_juego:
 
+    ldr r0, =saltar_redibujar
+    ldr r1, [r0]
+    cmp r1, #1
+    beq omitir_limpieza
+
     ldr r0, =matriz_activa
     mov r1, r5
     bl mostrar_mapa
 
+    b continuar_bucle
+
+omitir_limpieza:
+    mov r1, #0
+    ldr r0, =saltar_redibujar
+    str r1, [r0]
+
+continuar_bucle:
 
     bl pedir_movimiento
     mov r6, r0
@@ -140,15 +175,21 @@ bucle_juego:
     beq salir_programa
 
     cmp r6, #'r'
-    beq menu_juego
+    beq reiniciar_mapa
     cmp r6, #'R'
-    beq menu_juego
+    beq reiniciar_mapa
 
 
     mov r0, r4
     mov r1, r6
     bl obtener_posicion_siguiente
     mov r7, r0
+
+    mov r0, r4
+    mov r1, r6
+    bl movimiento_posible
+    cmp r0, #0
+    beq mostrar_fail
 
     mov r0, r7
     mov r1, r4
@@ -159,7 +200,56 @@ bucle_juego:
     addeq r5, r5, #1
     moveq r4, r7
 
+    cmp r0, #1
+    beq comprobar_puntos_mapa
+
+    b mostrar_fail
+
+mostrar_fail:
+    ldr r0, =matriz_activa
+    mov r1, r5
+    bl mostrar_mapa
+
+    mov r0, #1
+    ldr r1, =msg_fail
+    ldr r2, =len_fail
+    mov r7, #4
+    swi 0
+
+    b continuar_bucle
+
+reiniciar_mapa:
+    ldr r4, =mapa_actual
+    ldr r3, [r4]
+    cmp r3, #1
+    beq cargar_mapa1
+    cmp r3, #2
+    beq cargar_mapa2
+    cmp r3, #3
+    beq cargar_mapa3
+    b menu_juego
+
+comprobar_puntos_mapa:
+    ldr r0, =matriz_activa
+    bl hay_puntos_en_mapa
+    cmp r0, #0
+    beq mostrar_victoria
     b bucle_juego
+
+mostrar_victoria:
+    mov r0, #1
+    ldr r1, =cls
+    ldr r2, =lencls
+    mov r7, #4
+    swi 0
+
+    mov r0, #1
+    ldr r1, =msg_victoria
+    ldr r2, =len_victoria
+    mov r7, #4
+    swi 0
+
+    b menu_juego
 
 salir_programa:
     mov r0, #0
@@ -168,7 +258,25 @@ salir_programa:
 
 @SUBRUTINAS
 
+hay_puntos_en_mapa:
+    push {r4, r5, r6, lr}
 
+    mov r4, r0
+    mov r5, #0
+    mov r6, #0
+
+mientras_hay_puntos:
+    ldrb r1, [r4, r5]
+    cmp r1, #0
+    beq fin_hay_puntos
+    cmp r1, #'.'
+    addeq r6, r6, #1
+    add r5, r5, #1
+    b mientras_hay_puntos
+
+fin_hay_puntos:
+    mov r0, r6
+    pop {r4, r5, r6, pc}
 
 cargar_mapa:
 
@@ -518,5 +626,85 @@ continuar_empuje:
 
 fin_verificar_y_mover:
     mov r0, r8
+    pop {r4, r5, r6, r7, r8, r9, pc}
+
+movimiento_posible:
+
+    push {r4, r5, r6, r7, r8, r9, lr}
+
+    mov r4, r0
+    mov r5, r1
+    ldr r6, =columnas_activas
+    ldr r6, [r6]
+    ldr r7, =filas_activas
+    ldr r7, [r7]
+
+
+    mov r8, r4
+    mov r9, #0
+
+calcular_fila:
+    cmp r8, r6
+    blt calcular_columna
+    sub r8, r8, r6
+    add r9, r9, #1
+    b calcular_fila
+
+calcular_columna:
+    @ r8 = columna actual
+
+    cmp r5, #'w'
+    beq validar_arriba
+    cmp r5, #'W'
+    beq validar_arriba
+
+    cmp r5, #'s'
+    beq validar_abajo
+    cmp r5, #'S'
+    beq validar_abajo
+
+    cmp r5, #'a'
+    beq validar_izquierda
+    cmp r5, #'A'
+    beq validar_izquierda
+
+    cmp r5, #'d'
+    beq validar_derecha
+    cmp r5, #'D'
+    beq validar_derecha
+
+    mov r0, #1
+    b fin_movimiento_posible
+
+validar_arriba:
+    cmp r9, #0
+    beq movimiento_imposible
+    b movimiento_posible_ok
+
+validar_abajo:
+    sub r0, r7, #1
+    cmp r9, r0
+    beq movimiento_imposible
+    b movimiento_posible_ok
+
+validar_izquierda:
+    cmp r8, #0
+    beq movimiento_imposible
+    b movimiento_posible_ok
+
+validar_derecha:
+    sub r0, r6, #1
+    cmp r8, r0
+    beq movimiento_imposible
+    b movimiento_posible_ok
+
+movimiento_posible_ok:
+    mov r0, #1
+    b fin_movimiento_posible
+
+movimiento_imposible:
+    mov r0, #0
+
+fin_movimiento_posible:
     pop {r4, r5, r6, r7, r8, r9, pc}
 
